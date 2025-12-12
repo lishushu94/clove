@@ -7,6 +7,10 @@
   "accountManager": {
     "noAccountsAvailable": "当前没有可用的账户。请稍后重试。"
   },
+  "proxyService": {
+    "allProxiesUnavailable": "所有代理当前不可用。总数：{total}，冷却期结束后将自动恢复。",
+    "connectionFailed": "代理连接失败：{error_type}。正在尝试其他代理..."
+  },
   "oauthService": {
     "oauthExchangeError": "无法将授权代码兑换为令牌：{reason}",
     "organizationInfoError": "无法获取组织信息：{reason}",

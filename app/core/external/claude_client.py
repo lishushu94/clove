@@ -9,6 +9,7 @@ from app.core.http_client import (
     create_session,
     Response,
     AsyncSession,
+    ProxyNetworkException,
 )
 
 from app.core.config import settings
@@ -18,9 +19,11 @@ from app.core.exceptions import (
     CloudflareBlockedError,
     OrganizationDisabledError,
     ClaudeHttpError,
+    ProxyConnectionError,
 )
 from app.models.internal import UploadResponse
 from app.core.account import Account
+from app.services.proxy import proxy_service
 
 
 class ClaudeWebClient:
@@ -30,13 +33,19 @@ class ClaudeWebClient:
         self.account = account
         self.session: Optional[AsyncSession] = None
         self.endpoint = settings.claude_ai_url.encoded_string().rstrip("/")
+        self._proxy_url: Optional[str] = None  # 保存代理 URL 用于健康检查
 
     async def initialize(self):
         """Initialize the client session."""
+        # Get proxy URL from proxy service (fixed for this session)
+        self._proxy_url = await proxy_service.get_proxy(
+            account_id=self.account.organization_uuid
+        )
+
         self.session = create_session(
             timeout=settings.request_timeout,
             impersonate="chrome",
-            proxy=settings.proxy_url,
+            proxy=self._proxy_url,
             follow_redirects=False,
         )
 
@@ -80,9 +89,23 @@ class ClaudeWebClient:
             cookie_value = account.cookie_value
             headers = self._build_headers(cookie_value, conv_uuid)
             kwargs["headers"] = {**headers, **kwargs.get("headers", {})}
-            response: Response = await self.session.request(
-                method=method, url=url, stream=stream, **kwargs
-            )
+
+            try:
+                response: Response = await self.session.request(
+                    method=method, url=url, stream=stream, **kwargs
+                )
+            except ProxyNetworkException as e:
+                # Connection error after HTTP retries exhausted
+                # Mark proxy as unhealthy and wrap as retryable AppError
+                if self._proxy_url:
+                    await proxy_service.mark_unhealthy(
+                        self._proxy_url,
+                        reason=f"connection error: {type(e).__name__}"
+                    )
+                raise ProxyConnectionError(
+                    proxy_url=self._proxy_url,
+                    error_type=type(e).__name__,
+                )
 
             if response.status_code < 300:
                 return response
@@ -107,6 +130,17 @@ class ClaudeWebClient:
 
             if response.status_code == 403 and error_message == "Invalid authorization":
                 raise ClaudeAuthenticationError()
+
+            # HTTP 403 with empty response and proxy: likely IP banned
+            if (
+                response.status_code == 403
+                and self._proxy_url
+                and error_type == "empty_response"
+            ):
+                await proxy_service.mark_unhealthy(
+                    self._proxy_url,
+                    reason=f"HTTP 403 Forbidden (empty response) during web request to {url}",
+                )
 
             if response.status_code == 429:
                 try:

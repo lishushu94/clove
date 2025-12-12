@@ -7,6 +7,10 @@
   "accountManager": {
     "noAccountsAvailable": "No accounts are currently available. Please try again later."
   },
+  "proxyService": {
+    "allProxiesUnavailable": "All proxies are currently unavailable. Total: {total}, will recover after cooldown.",
+    "connectionFailed": "Proxy connection failed: {error_type}. Retrying with another proxy..."
+  },
   "oauthService": {
     "oauthExchangeError": "Failed to exchange authorization code for tokens.",
     "organizationInfoError": "Failed to get organization Info: {reason}",

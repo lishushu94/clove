@@ -273,3 +273,47 @@ class NoMessageError(AppError):
             context=context,
             retryable=True,
         )
+
+
+class AllProxiesUnavailableError(AppError):
+    """All proxies in the pool are unhealthy."""
+
+    def __init__(self, context: Optional[Dict[str, Any]] = None):
+        super().__init__(
+            error_code=503200,
+            message_key="proxyService.allProxiesUnavailable",
+            status_code=503,
+            context=context,
+            retryable=True,  # 允许重试，代理可能恢复
+        )
+
+
+class ProxyConnectionError(AppError):
+    """
+    代理连接失败异常
+    Proxy connection failed after retries.
+    """
+
+    def __init__(
+        self,
+        proxy_url: Optional[str] = None,
+        error_type: Optional[str] = None,
+        context: Optional[Dict[str, Any]] = None,
+    ):
+        ctx = context.copy() if context else {}
+        if proxy_url:
+            # 脱敏：只保留 host:port
+            from urllib.parse import urlparse
+
+            parsed = urlparse(proxy_url)
+            ctx["proxy"] = f"{parsed.hostname}:{parsed.port}"
+        if error_type:
+            ctx["error_type"] = error_type
+
+        super().__init__(
+            error_code=503201,
+            message_key="proxyService.connectionFailed",
+            status_code=503,
+            context=ctx,
+            retryable=True,  # 允许业务层重试（会换新代理）
+        )

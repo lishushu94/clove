@@ -6,6 +6,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field, HttpUrl, field_validator
 from dotenv import load_dotenv
 
+from app.models.proxy import ProxySettings, ProxyMode
+
 class Settings(BaseSettings):
     """Application settings with environment variable and JSON config support."""
 
@@ -111,6 +113,28 @@ class Settings(BaseSettings):
 
     # Proxy settings
     proxy_url: Optional[str] = Field(default=None, env="PROXY_URL")
+    proxy: Optional[ProxySettings] = Field(
+        default=None,
+        description="Advanced proxy settings for dynamic proxy pool management",
+    )
+
+    @property
+    def effective_proxy_mode(self) -> ProxyMode:
+        """Get effective proxy mode considering backward compatibility."""
+        if self.proxy is not None:
+            return self.proxy.mode
+        # Backward compatibility: proxy_url exists → fixed mode
+        if self.proxy_url:
+            return ProxyMode.FIXED
+        return ProxyMode.DISABLED
+
+    @property
+    def effective_fixed_url(self) -> Optional[str]:
+        """Get effective fixed proxy URL considering backward compatibility."""
+        if self.proxy is not None and self.proxy.fixed_url:
+            return self.proxy.fixed_url
+        # Backward compatibility: use proxy_url
+        return self.proxy_url
 
     # API Keys
     api_keys: List[str] | str = Field(

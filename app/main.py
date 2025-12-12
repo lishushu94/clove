@@ -13,6 +13,52 @@ from app.services.account import account_manager
 from app.services.session import session_manager
 from app.services.tool_call import tool_call_manager
 from app.services.cache import cache_service
+from app.services.proxy import proxy_service
+
+
+def migrate_proxy_config():
+    """
+    迁移旧的 proxy_url 配置到新的 proxy 格式
+    Migrate legacy proxy_url config to new proxy settings format.
+    """
+    import json
+    import os
+    from app.models.proxy import ProxySettings, ProxyMode
+
+    # 检查是否需要迁移：proxy_url 存在且 proxy 不存在
+    if not settings.proxy_url or settings.proxy is not None:
+        return
+
+    logger.info(f"Migrating legacy proxy_url to new proxy format...")
+
+    # 创建新的 proxy 配置
+    new_proxy = ProxySettings(
+        mode=ProxyMode.FIXED,
+        fixed_url=settings.proxy_url,
+    )
+
+    # 更新内存中的配置
+    settings.proxy = new_proxy
+    settings.proxy_url = None
+
+    # 保存到 config.json
+    if not settings.no_filesystem_mode:
+        config_path = settings.data_folder / "config.json"
+        if os.path.exists(config_path):
+            try:
+                with open(config_path, "r", encoding="utf-8") as f:
+                    config_data = json.load(f)
+
+                # 迁移：添加新字段，删除旧字段
+                config_data["proxy"] = new_proxy.model_dump()
+                config_data.pop("proxy_url", None)
+
+                with open(config_path, "w", encoding="utf-8") as f:
+                    json.dump(config_data, f, indent=2, ensure_ascii=False)
+
+                logger.info("Proxy config migration completed successfully")
+            except (json.JSONDecodeError, IOError) as e:
+                logger.warning(f"Failed to migrate proxy config file: {e}")
 
 
 @asynccontextmanager
@@ -21,6 +67,9 @@ async def lifespan(app: FastAPI):
     logger.info("Starting Clove...")
 
     configure_logger()
+
+    # 迁移旧的代理配置
+    migrate_proxy_config()
 
     # Load accounts
     account_manager.load_accounts()
@@ -33,6 +82,7 @@ async def lifespan(app: FastAPI):
     await session_manager.start_cleanup_task()
     await tool_call_manager.start_cleanup_task()
     await cache_service.start_cleanup_task()
+    await proxy_service.initialize()
 
     yield
 
@@ -46,6 +96,7 @@ async def lifespan(app: FastAPI):
     await session_manager.cleanup_all()
     await tool_call_manager.cleanup_all()
     await cache_service.cleanup_all()
+    await proxy_service.shutdown()
 
 
 app = FastAPI(

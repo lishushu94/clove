@@ -2,9 +2,10 @@ from app.core.http_client import (
     Response,
     AsyncSession,
     create_session,
+    RequestException,
 )
 from datetime import datetime, timedelta, UTC
-from typing import Dict
+from typing import Dict, Optional
 from loguru import logger
 from fastapi.responses import StreamingResponse
 
@@ -13,12 +14,14 @@ from app.processors.base import BaseProcessor
 from app.processors.claude_ai import ClaudeAIContext
 from app.services.account import account_manager
 from app.services.cache import cache_service
+from app.services.proxy import proxy_service
 from app.core.exceptions import (
     ClaudeHttpError,
     ClaudeRateLimitedError,
     InvalidModelNameError,
     NoAccountsAvailableError,
     OAuthAuthenticationNotAllowedError,
+    ProxyConnectionError,
 )
 from app.core.config import settings
 
@@ -94,16 +97,35 @@ class ClaudeAPIProcessor(BaseProcessor):
                 )
                 headers = self._prepare_headers(account.oauth_token.access_token)
 
-                session = create_session(
-                    proxy=settings.proxy_url,
-                    timeout=settings.request_timeout,
-                    impersonate="chrome",
-                    follow_redirects=False,
+                # Get proxy URL from proxy service
+                proxy_url = await proxy_service.get_proxy(
+                    account_id=account.organization_uuid
                 )
 
-                response = await self._request_messages_api(
-                    session, request_json, headers
-                )
+                session: Optional[AsyncSession] = None
+                try:
+                    session = create_session(
+                        proxy=proxy_url,
+                        timeout=settings.request_timeout,
+                        impersonate="chrome",
+                        follow_redirects=False,
+                    )
+
+                    response = await self._request_messages_api(
+                        session, request_json, headers
+                    )
+                except RequestException as e:
+                    # Transport layer error after HTTP retries exhausted
+                    # Mark proxy as unhealthy and wrap as retryable AppError
+                    if proxy_url:
+                        await proxy_service.mark_unhealthy(
+                            proxy_url,
+                            reason=f"connection error: {type(e).__name__}"
+                        )
+                    raise ProxyConnectionError(
+                        proxy_url=proxy_url,
+                        error_type=type(e).__name__,
+                    )
 
                 resets_at = response.headers.get("anthropic-ratelimit-unified-reset")
                 if resets_at:
@@ -126,18 +148,39 @@ class ClaudeAPIProcessor(BaseProcessor):
                     )
 
                 if response.status_code >= 400:
-                    error_data = await response.json()
+                    # Try to parse error response
+                    try:
+                        error_data = await response.json()
+                        error_type = error_data.get("error", {}).get("type", "unknown")
+                        error_message = error_data.get("error", {}).get(
+                            "message", "Unknown error"
+                        )
+                    except Exception:
+                        # Empty or invalid JSON response
+                        error_data = {}
+                        error_type = "empty_response"
+                        error_message = f"HTTP {response.status_code} error with empty response"
+
+                    # HTTP 403 with empty response and proxy: likely IP banned
+                    if (
+                        response.status_code == 403
+                        and proxy_url
+                        and error_type == "empty_response"
+                    ):
+                        await proxy_service.mark_unhealthy(
+                            proxy_url,
+                            reason="HTTP 403 Forbidden (empty response) - likely IP banned by Claude API",
+                        )
 
                     if (
                         response.status_code == 400
-                        and error_data.get("error", {}).get("message")
-                        == "system: Invalid model name"
+                        and error_message == "system: Invalid model name"
                     ):
                         raise InvalidModelNameError(context.messages_api_request.model)
 
                     if (
                         response.status_code == 401
-                        and error_data.get("error", {}).get("message")
+                        and error_message
                         == "OAuth authentication is currently not allowed for this organization."
                     ):
                         raise OAuthAuthenticationNotAllowedError()
@@ -148,10 +191,8 @@ class ClaudeAPIProcessor(BaseProcessor):
                     raise ClaudeHttpError(
                         url=self.messages_api_url,
                         status_code=response.status_code,
-                        error_type=error_data.get("error", {}).get("type", "unknown"),
-                        error_message=error_data.get("error", {}).get(
-                            "message", "Unknown error"
-                        ),
+                        error_type=error_type,
+                        error_message=error_message,
                     )
 
                 async def stream_response():

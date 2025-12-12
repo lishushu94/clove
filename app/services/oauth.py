@@ -5,7 +5,7 @@ import time
 from typing import Dict, List, Optional, Tuple
 from urllib.parse import urlparse, parse_qs
 
-from app.core.http_client import Response, create_session
+from app.core.http_client import Response, create_session, ProxyNetworkException
 from loguru import logger
 
 from app.core.config import settings
@@ -18,7 +18,9 @@ from app.core.exceptions import (
     CookieAuthorizationError,
     OAuthExchangeError,
     OrganizationInfoError,
+    ProxyConnectionError,
 )
+from app.services.proxy import proxy_service
 
 
 class OAuthAuthenticator:
@@ -52,20 +54,43 @@ class OAuthAuthenticator:
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         }
 
-    async def _request(self, method: str, url: str, **kwargs) -> Response:
+    async def _request(
+        self,
+        method: str,
+        url: str,
+        account_id: Optional[str] = None,
+        cookie: Optional[str] = None,
+        **kwargs,
+    ) -> Response:
+        # Get proxy URL from proxy service
+        proxy_url = await proxy_service.get_proxy(account_id=account_id, cookie=cookie)
+
         session = create_session(
             timeout=settings.request_timeout,
             impersonate="chrome",
-            proxy=settings.proxy_url,
+            proxy=proxy_url,
             follow_redirects=False,
         )
         async with session:
-            response: Response = await session.request(method=method, url=url, **kwargs)
+            try:
+                response: Response = await session.request(method=method, url=url, **kwargs)
+            except ProxyNetworkException as e:
+                # Connection error: mark proxy as unhealthy and wrap as retryable AppError
+                if proxy_url:
+                    await proxy_service.mark_unhealthy(
+                        proxy_url,
+                        reason=f"connection error: {type(e).__name__}"
+                    )
+                raise ProxyConnectionError(
+                    proxy_url=proxy_url,
+                    error_type=type(e).__name__,
+                )
 
         if response.status_code == 302:
             raise CloudflareBlockedError()
 
         if response.status_code == 403:
+            # OAuth flow 403 is usually authentication error, not proxy issue
             raise ClaudeAuthenticationError()
 
         if response.status_code >= 300:
@@ -84,7 +109,8 @@ class OAuthAuthenticator:
         headers = self._build_headers(cookie)
 
         try:
-            response = await self._request("GET", url, headers=headers)
+            # Use cookie for proxy selection (no account_id available yet)
+            response = await self._request("GET", url, cookie=cookie, headers=headers)
 
             org_data = await response.json()
             if org_data and isinstance(org_data, list):
@@ -157,8 +183,9 @@ class OAuthAuthenticator:
 
         logger.debug(f"Requesting authorization from: {authorize_url}")
 
+        # Use organization_uuid for proxy selection
         response = await self._request(
-            "POST", authorize_url, json=payload, headers=headers
+            "POST", authorize_url, account_id=organization_uuid, json=payload, headers=headers
         )
 
         auth_response = await response.json()
@@ -312,8 +339,30 @@ class OAuthAuthenticator:
             logger.error("Account has no refresh token")
             return False
 
-        token_data = await self.refresh_access_token(account.oauth_token.refresh_token)
-        if not token_data:
+        data = {
+            "grant_type": "refresh_token",
+            "refresh_token": account.oauth_token.refresh_token,
+            "client_id": settings.oauth_client_id,
+        }
+
+        try:
+            # Use _request directly with account_id for proxy consistency
+            response = await self._request(
+                "POST",
+                settings.oauth_token_url,
+                account_id=account.organization_uuid,
+                json=data,
+                headers={"Content-Type": "application/json"},
+            )
+
+            if response.status_code != 200:
+                logger.error(f"Token refresh failed: {response.status_code}")
+                return None
+
+            token_data = await response.json()
+
+        except Exception as e:
+            logger.error(f"Error refreshing token: {e}")
             return False
 
         account.oauth_token = OAuthToken(

@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from app.api.routes import claude, accounts, settings, statistics
+from app.api.routes import claude, accounts, settings, statistics, proxies
 
 api_router = APIRouter()
 
@@ -12,4 +12,7 @@ api_router.include_router(
 )
 api_router.include_router(
     statistics.router, prefix="/api/admin/statistics", tags=["Statistics"]
+)
+api_router.include_router(
+    proxies.router, prefix="/api/admin/proxies", tags=["Proxy Management"]
 )

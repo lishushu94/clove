@@ -587,3 +587,28 @@ elif CURL_CFFI_AVAILABLE:
     RequestException = CurlRequestException
 else:
     RequestException = httpx.RequestError
+
+
+# Export proxy-related network exceptions for health marking
+# These indicate proxy issues that should trigger rotation
+if RNET_AVAILABLE:
+    from rnet.exceptions import (
+        ConnectionError as RnetConnectionError,
+        ConnectionResetError as RnetConnectionResetError,
+        TimeoutError as RnetTimeoutError,
+        TlsError as RnetTlsError,
+    )
+    # 精确分类：只包含代理相关的网络异常
+    # 排除：DNSResolverError（本地DNS）、RedirectError（目标服务器）、
+    #      DecodingError/BodyError/BuilderError/URLParseError（代码/数据问题）
+    ProxyNetworkException = (
+        RnetConnectionError,       # 代理连接失败
+        RnetConnectionResetError,  # 连接被重置
+        RnetTimeoutError,          # 连接超时
+        RnetTlsError,              # TLS 握手失败
+        RnetRequestError,          # 通用请求错误
+    )
+elif CURL_CFFI_AVAILABLE:
+    ProxyNetworkException = (CurlRequestException,)
+else:
+    ProxyNetworkException = (httpx.RequestError,)
