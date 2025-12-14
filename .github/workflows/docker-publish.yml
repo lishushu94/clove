@@ -63,6 +63,10 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ steps.lower.outputs.image_name }}
+          labels: |
+            org.opencontainers.image.title=Clove
+            org.opencontainers.image.description=Claude.ai reverse proxy providing standard Claude API access
+            org.opencontainers.image.vendor=${{ github.repository_owner }}
           tags: |
             type=ref,event=branch
             type=ref,event=pr
@@ -95,3 +99,12 @@ jobs:
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: "trivy-results.sarif"
+
+      - name: Cleanup old untagged images
+        if: github.event_name != 'pull_request'
+        uses: actions/delete-package-versions@v5
+        with:
+          package-name: clove
+          package-type: container
+          min-versions-to-keep: 3
+          delete-only-untagged-versions: true
