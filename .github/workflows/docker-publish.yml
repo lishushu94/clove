@@ -63,7 +63,13 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ steps.lower.outputs.image_name }}
+          # Labels for single-arch images
           labels: |
+            org.opencontainers.image.title=Clove
+            org.opencontainers.image.description=Claude.ai reverse proxy providing standard Claude API access
+            org.opencontainers.image.vendor=${{ github.repository_owner }}
+          # Annotations for multi-arch images (required for GHCR description)
+          annotations: |
             org.opencontainers.image.title=Clove
             org.opencontainers.image.description=Claude.ai reverse proxy providing standard Claude API access
             org.opencontainers.image.vendor=${{ github.repository_owner }}
@@ -76,13 +82,14 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Build and push Docker image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: .
           platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          annotations: ${{ steps.meta.outputs.annotations }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

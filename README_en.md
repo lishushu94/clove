@@ -20,31 +20,31 @@ Clove is a reverse proxy tool that lets you access Claude.ai through a standard 
 
 ## 🚀 Quick Start
 
-Just three steps to get started:
-
-### 1. Install Python
-
-Make sure you have Python 3.13 or higher on your computer
-
-### 2. Install Clove
+### Option 1: Docker Run
 
 ```bash
-pip install "clove-proxy[rnet]"
+docker run -d --name clove --restart unless-stopped \
+  -p 5201:5201 -v ./data:/data \
+  -e HOST=0.0.0.0 -e PORT=5201 -e DATA_FOLDER=/data \
+  -e LOG_LEVEL=INFO -e LOG_TO_FILE=true -e LOG_FILE_PATH=/data/logs/app.log \
+  ghcr.io/huan-zhaojun/clove:latest
 ```
 
-### 3. Launch!
+### Option 2: Docker Compose
 
 ```bash
-clove
+mkdir -p clove && cd clove
+curl -sO https://raw.githubusercontent.com/Huan-zhaojun/clove/main/docker-compose.yml
+docker compose up -d
 ```
 
-After starting, you'll see a randomly generated temporary admin key in the console. Don't forget to add your own key after logging into the admin panel!
+### Getting Started
 
-### 4. Configure Your Account
+1. Open your browser and go to: http://localhost:5201
+2. Log in with the temporary admin key shown in console
+3. Add your Claude account and start using!
 
-Open your browser and go to: http://localhost:5201
-
-Log in with the admin key from earlier, then you can add your Claude account~
+> 💡 On first launch, a randomly generated temporary admin key will be shown in the console. Remember to set your own key after logging in.
 
 ## ✨ Core Features
 

@@ -20,31 +20,31 @@ Clove 是一个让你能够通过标准 Claude API 访问 Claude.ai 的反向代
 
 ## 🚀 快速开始
 
-只需要三步，就能开始使用：
-
-### 1. 安装 Python
-
-确保你的电脑上有 Python 3.13 或更高版本
-
-### 2. 安装 Clove
+### 方式一：Docker Run
 
 ```bash
-pip install "clove-proxy[rnet]"
+docker run -d --name clove --restart unless-stopped \
+  -p 5201:5201 -v ./data:/data \
+  -e HOST=0.0.0.0 -e PORT=5201 -e DATA_FOLDER=/data \
+  -e LOG_LEVEL=INFO -e LOG_TO_FILE=true -e LOG_FILE_PATH=/data/logs/app.log \
+  ghcr.io/huan-zhaojun/clove:latest
 ```
 
-### 3. 启动！
+### 方式二：Docker Compose
 
 ```bash
-clove
+mkdir -p clove && cd clove
+curl -sO https://raw.githubusercontent.com/Huan-zhaojun/clove/main/docker-compose.yml
+docker compose up -d
 ```
 
-启动后会在控制台显示一个随机生成的临时管理密钥。登录管理页面后别忘了添加自己的密钥哦！
+### 开始使用
 
-### 4. 配置账户
+1. 打开浏览器访问：http://localhost:5201
+2. 使用控制台显示的临时管理密钥登录
+3. 添加你的 Claude 账户，开始使用！
 
-打开浏览器访问：http://localhost:5201
-
-使用刚才的管理密钥登录，然后就可以添加你的 Claude 账户了～
+> 💡 首次启动会在控制台显示随机生成的临时管理密钥，登录后记得设置自己的密钥。
 
 ## ✨ 核心功能
 

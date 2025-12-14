@@ -2,9 +2,10 @@ version: "3.8"
 
 services:
   clove:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: ghcr.io/huan-zhaojun/clove:latest
+    #build:
+    #  context: .
+    #  dockerfile: Dockerfile
     container_name: clove
     restart: unless-stopped
     ports:
