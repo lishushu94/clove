@@ -5,6 +5,8 @@ import time
 from typing import Dict, List, Optional, Tuple
 from urllib.parse import urlparse, parse_qs
 
+from tenacity import retry, retry_if_exception, stop_after_attempt, wait_fixed
+
 from app.core.http_client import Response, create_session, ProxyNetworkException
 from loguru import logger
 
@@ -21,6 +23,7 @@ from app.core.exceptions import (
     ProxyConnectionError,
 )
 from app.services.proxy import proxy_service
+from app.utils.retry import is_retryable_error, log_before_sleep
 
 
 class OAuthAuthenticator:
@@ -54,6 +57,13 @@ class OAuthAuthenticator:
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         }
 
+    @retry(
+        retry=retry_if_exception(is_retryable_error),
+        stop=stop_after_attempt(settings.retry_attempts),
+        wait=wait_fixed(settings.retry_interval),
+        before_sleep=log_before_sleep,
+        reraise=True,
+    )
     async def _request(
         self,
         method: str,
@@ -90,7 +100,35 @@ class OAuthAuthenticator:
             raise CloudflareBlockedError()
 
         if response.status_code == 403:
-            # OAuth flow 403 is usually authentication error, not proxy issue
+            # 先解析响应内容，区分代理问题和认证错误
+            try:
+                error_data = await response.json()
+                error_body = error_data.get("error", {})
+                error_message = error_body.get("message", "Unknown error")
+                error_type = error_body.get("type", "unknown")
+            except Exception:
+                error_message = "HTTP 403 error with empty response"
+                error_type = "empty_response"
+
+            # 真正的认证错误（有明确的错误消息）
+            if error_message == "Invalid authorization":
+                raise ClaudeAuthenticationError()
+
+            # 403 + 空响应 + 有代理 = 代理 IP 被封
+            if proxy_url and error_type == "empty_response":
+                await proxy_service.mark_unhealthy(
+                    proxy_url,
+                    reason="HTTP 403 Forbidden (empty response) - likely IP banned",
+                )
+                # 抛出可重试的异常，换代理重试
+                raise ClaudeHttpError(
+                    url=url,
+                    status_code=403,
+                    error_type=error_type,
+                    error_message=error_message,
+                )
+
+            # 其他 403 情况，抛出认证错误
             raise ClaudeAuthenticationError()
 
         if response.status_code >= 300:

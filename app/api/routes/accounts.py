@@ -4,11 +4,15 @@ from pydantic import BaseModel, Field
 from uuid import UUID
 import time
 
+from tenacity import retry, retry_if_exception, stop_after_attempt, wait_fixed
+
+from app.core.config import settings
 from app.core.exceptions import OAuthExchangeError
 from app.dependencies.auth import AdminAuthDep
 from app.services.account import account_manager
 from app.core.account import AuthType, AccountStatus, OAuthToken
 from app.services.oauth import oauth_authenticator
+from app.utils.retry import is_retryable_error, log_before_sleep
 
 
 class OAuthTokenCreate(BaseModel):
@@ -105,6 +109,13 @@ async def get_account(organization_uuid: str, _: AdminAuthDep):
 
 
 @router.post("", response_model=AccountResponse)
+@retry(
+    retry=retry_if_exception(is_retryable_error),
+    stop=stop_after_attempt(settings.retry_attempts),
+    wait=wait_fixed(settings.retry_interval),
+    before_sleep=log_before_sleep,
+    reraise=True,
+)
 async def create_account(account_data: AccountCreate, _: AdminAuthDep):
     """Create a new account."""
     oauth_token = None
@@ -213,6 +224,13 @@ async def delete_account(organization_uuid: str, _: AdminAuthDep):
 
 
 @router.post("/oauth/exchange", response_model=AccountResponse)
+@retry(
+    retry=retry_if_exception(is_retryable_error),
+    stop=stop_after_attempt(settings.retry_attempts),
+    wait=wait_fixed(settings.retry_interval),
+    before_sleep=log_before_sleep,
+    reraise=True,
+)
 async def exchange_oauth_code(exchange_data: OAuthCodeExchange, _: AdminAuthDep):
     """Exchange OAuth authorization code for tokens and create account."""
     # Exchange code for tokens
